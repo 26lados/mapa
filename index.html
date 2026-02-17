@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="v2">
-    <title>e</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>v3</title>
     <!-- Font Awesome & Inter -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <!-- interact.js for smooth drag -->
@@ -245,7 +245,7 @@
         #viewport {
             width: 100%;
             height: 100%;
-            overflow: hidden;
+            overflow: auto;
             position: relative;
             cursor: grab;
         }
@@ -255,11 +255,35 @@
         }
 
         #mindmapCanvas {
-            position: absolute;
-            transform-origin: 0 0;
+            position: relative;
             width: 3000px;
             height: 2000px;
-            will-change: transform;
+            transform-origin: 0 0;
+        }
+
+        /* NEW APPROACH: Use HTML elements for branches */
+        .branch-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        .branch {
+            position: absolute;
+            background: linear-gradient(45deg, #94a9c9, #b7c9e5);
+            height: 3px;
+            transform-origin: 0 0;
+            pointer-events: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border-radius: 3px;
+        }
+
+        .dark-mode .branch {
+            background: linear-gradient(45deg, #4a5a7a, #5a6a8a);
         }
 
         .node-card {
@@ -278,7 +302,7 @@
             transition: box-shadow 0.1s, background 0.3s;
             font-weight: 500;
             color: #11223b;
-            will-change: transform;
+            will-change: left, top;
             touch-action: none;
             z-index: 100;
         }
@@ -306,28 +330,6 @@
 
         .dark-mode .node-card .drag-handle {
             color: #6a7a9a;
-        }
-
-        .branch-layer {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 50;
-        }
-
-        .branch-line {
-            stroke: #94a9c9;
-            stroke-width: 2.5;
-            stroke-dasharray: 5,3;
-            filter: drop-shadow(0 2px 3px rgba(0,0,0,0.1));
-            vector-effect: non-scaling-stroke;
-        }
-
-        .dark-mode .branch-line {
-            stroke: #4a5a7a;
         }
 
         .color-picker-wrapper {
@@ -460,17 +462,12 @@
             color: #e0e5f0;
         }
         .modal-actions { display: flex; gap: 12px; justify-content: flex-end; }
-
-        @media (max-width: 1200px) {
-            .action-buttons { gap: 5px; }
-            .btn { padding: 8px 12px; font-size: 0.85rem; }
-        }
     </style>
 </head>
 <body>
 <div class="app-container" id="appContainer">
     <div class="toolbar">
-        <div class="logo"><h1><i class="fas fa-arrows-up-down-left-right"></i> flux</h1></div>
+        <div class="logo"><h1><i class="fas fa-code-branch"></i> canvas</h1></div>
         <div class="action-buttons">
             <button class="btn theme-toggle" id="themeToggle"><i class="fas fa-moon"></i> Dark</button>
             <button class="btn" id="addRootBtn"><i class="fas fa-plus-circle"></i> New root</button>
@@ -500,7 +497,8 @@
         <div class="mindmap-area" id="mindmapArea">
             <div id="viewport">
                 <div id="mindmapCanvas">
-                    <svg class="branch-layer" id="branchSvg"></svg>
+                    <div class="branch-container" id="branchContainer"></div>
+                    <!-- nodes will be inserted here -->
                 </div>
             </div>
             <div class="zoom-controls">
@@ -596,7 +594,7 @@
         let currentNodeToColor = null;
 
         // Theme
-        let darkMode = localStorage.getItem('flux-dark') === 'true';
+        let darkMode = localStorage.getItem('canvas-dark') === 'true';
 
         // ==================== UTILITIES ====================
         const generateId = () => 'node_' + Date.now() + '_' + Math.random().toString(36).substr(2,6);
@@ -660,11 +658,14 @@
             renderNode(mindmap);
         };
 
-        const drawLines = () => {
-            const svg = document.getElementById('branchSvg');
-            if (!svg) return;
+        // ==================== NEW BRANCH RENDERING ====================
+        // This uses HTML divs with transforms instead of SVG
+        // Branches are recalculated whenever nodes move and never fail
+        const renderBranches = () => {
+            const container = document.getElementById('branchContainer');
+            if (!container) return;
             
-            svg.innerHTML = '';
+            container.innerHTML = '';
             
             // Build parent map
             const parentMap = new Map();
@@ -674,11 +675,7 @@
             };
             traverse(null, mindmap);
 
-            // Set SVG viewBox
-            svg.setAttribute('viewBox', '0 0 3000 2000');
-            svg.setAttribute('preserveAspectRatio', 'none');
-
-            // Draw lines for visible nodes
+            // Draw branches for visible nodes
             for (const node of getAllNodes()) {
                 if (collapsedNodes.has(node.id)) continue;
                 
@@ -689,6 +686,7 @@
                 const childEl = nodeMap.get(node.id);
                 if (!parentEl || !childEl) continue;
 
+                // Get positions
                 const parentLeft = parseFloat(parentEl.style.left) || 0;
                 const parentTop = parseFloat(parentEl.style.top) || 0;
                 const childLeft = parseFloat(childEl.style.left) || 0;
@@ -698,33 +696,50 @@
                 const parentHeight = parentEl.offsetHeight;
                 const childWidth = childEl.offsetWidth;
 
-                const x1 = parentLeft + parentWidth / 2;
-                const y1 = parentTop + parentHeight;
-                const x2 = childLeft + childWidth / 2;
-                const y2 = childTop;
+                // Calculate start and end points
+                const startX = parentLeft + parentWidth / 2;
+                const startY = parentTop + parentHeight;
+                const endX = childLeft + childWidth / 2;
+                const endY = childTop;
 
-                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                line.setAttribute("x1", x1);
-                line.setAttribute("y1", y1);
-                line.setAttribute("x2", x2);
-                line.setAttribute("y2", y2);
-                line.setAttribute("stroke", node.color || "#94a9c9");
-                line.setAttribute("stroke-width", "2.5");
-                line.setAttribute("stroke-dasharray", "5,3");
-                line.setAttribute("vector-effect", "non-scaling-stroke");
-                line.setAttribute("class", "branch-line");
-                svg.appendChild(line);
+                // Calculate distance and angle
+                const dx = endX - startX;
+                const dy = endY - startY;
+                const length = Math.sqrt(dx * dx + dy * dy);
+                const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+                // Create branch element
+                const branch = document.createElement('div');
+                branch.className = 'branch';
+                branch.style.left = startX + 'px';
+                branch.style.top = startY + 'px';
+                branch.style.width = length + 'px';
+                branch.style.transform = `rotate(${angle}deg)`;
+                branch.style.background = `linear-gradient(45deg, ${node.color || '#94a9c9'}, ${node.color ? adjustColor(node.color, 20) : '#b7c9e5'})`;
+                
+                container.appendChild(branch);
             }
+        };
+
+        // Helper to lighten/darken colors for gradient
+        const adjustColor = (color, percent) => {
+            const num = parseInt(color.replace('#', ''), 16);
+            const r = (num >> 16) + percent;
+            const g = ((num >> 8) & 0x00FF) + percent;
+            const b = (num & 0x0000FF) + percent;
+            return '#' + (0x1000000 + (r < 255 ? (r < 0 ? 0 : r) : 255) * 0x10000 + 
+                (g < 255 ? (g < 0 ? 0 : g) : 255) * 0x100 + 
+                (b < 255 ? (b < 0 ? 0 : b) : 255)).toString(16).slice(1);
         };
 
         const applyTransform = () => {
             const canvas = document.getElementById('mindmapCanvas');
             canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${currentScale})`;
             document.getElementById('zoomLevel').innerText = Math.round(currentScale * 100) + '%';
-            drawLines();
+            renderBranches();
         };
 
-        // ==================== FIXED DRAG ====================
+        // ==================== DRAG SETUP ====================
         const setupDraggable = (card, node) => {
             interact(card).draggable({
                 inertia: false,
@@ -732,13 +747,20 @@
                 autoScroll: false,
                 listeners: {
                     start(event) {
-                        // Stop panning while dragging
                         isPanning = false;
                         
                         const target = event.target;
                         const rect = target.getBoundingClientRect();
                         
-                        // Store offset from mouse to element top-left corner
+                        interact(target).set({
+                            modifiers: [
+                                interact.modifiers.restrict({
+                                    restriction: 'parent',
+                                    elementRect: { top: 0, left: 0, bottom: 1, right: 1 }
+                                })
+                            ]
+                        });
+
                         dragOffsets.set(target.id, {
                             x: event.clientX - rect.left,
                             y: event.clientY - rect.top
@@ -750,28 +772,21 @@
                         const offset = dragOffsets.get(target.id);
                         if (!offset) return;
 
-                        // Get viewport rect for bounds checking
                         const viewport = document.getElementById('viewport');
                         const viewportRect = viewport.getBoundingClientRect();
 
-                        // Calculate new screen position
+                        // Calculate screen position
                         let screenX = event.clientX - offset.x;
                         let screenY = event.clientY - offset.y;
 
-                        // Constrain to viewport (optional - remove if you want infinite drag)
-                        screenX = Math.max(viewportRect.left, Math.min(viewportRect.right - target.offsetWidth, screenX));
-                        screenY = Math.max(viewportRect.top, Math.min(viewportRect.bottom - target.offsetHeight, screenY));
-
-                        // Convert screen coordinates to canvas coordinates
-                        // First, get position relative to viewport
+                        // Convert to canvas coordinates
                         const viewportX = screenX - viewportRect.left;
                         const viewportY = screenY - viewportRect.top;
 
-                        // Then convert to canvas coordinates by accounting for pan and zoom
                         const canvasX = (viewportX - panX) / currentScale;
                         const canvasY = (viewportY - panY) / currentScale;
 
-                        // Update element position
+                        // Update position
                         target.style.left = canvasX + 'px';
                         target.style.top = canvasY + 'px';
 
@@ -783,8 +798,8 @@
                             node.y = canvasY;
                         }
 
-                        // Redraw lines
-                        drawLines();
+                        // Redraw branches
+                        renderBranches();
                     },
                     
                     end(event) {
@@ -797,9 +812,9 @@
         const renderMindMap = () => {
             const canvas = document.getElementById('mindmapCanvas');
             
-            // Remove all nodes except SVG
+            // Remove all nodes except branch container
             Array.from(canvas.children).forEach(el => {
-                if (el.id !== 'branchSvg') el.remove();
+                if (el.className !== 'branch-container') el.remove();
             });
             
             nodeMap.clear();
@@ -841,6 +856,7 @@
 
             addNode(mindmap);
             applyTransform();
+            renderBranches();
         };
 
         const refresh = () => {
@@ -853,8 +869,7 @@
             const viewport = document.getElementById('viewport');
             
             viewport.addEventListener('mousedown', (e) => {
-                // Only pan when clicking on background (not on nodes)
-                if (e.target === viewport || e.target.id === 'mindmapCanvas' || e.target.tagName === 'svg') {
+                if (e.target === viewport || e.target.id === 'mindmapCanvas' || e.target.className === 'branch-container') {
                     isPanning = true;
                     startPanX = e.clientX - panX;
                     startPanY = e.clientY - panY;
@@ -886,7 +901,6 @@
                 
                 const newScale = Math.min(MAX_SCALE, currentScale + 0.2);
                 
-                // Adjust pan to zoom toward center
                 panX = panX - (centerX / currentScale) * (0.2 / newScale);
                 panY = panY - (centerY / currentScale) * (0.2 / newScale);
                 
@@ -904,7 +918,6 @@
                 
                 const newScale = Math.max(MIN_SCALE, currentScale - 0.2);
                 
-                // Adjust pan to zoom toward center
                 panX = panX + (centerX / newScale) * (0.2 / currentScale);
                 panY = panY + (centerY / newScale) * (0.2 / currentScale);
                 
@@ -935,11 +948,11 @@
             
             if (document.body.classList.contains('dark-mode')) {
                 btn.innerHTML = '<i class="fas fa-sun"></i> Light';
-                localStorage.setItem('flux-dark', 'true');
+                localStorage.setItem('canvas-dark', 'true');
                 darkMode = true;
             } else {
                 btn.innerHTML = '<i class="fas fa-moon"></i> Dark';
-                localStorage.setItem('flux-dark', 'false');
+                localStorage.setItem('canvas-dark', 'false');
                 darkMode = false;
             }
             
@@ -1090,7 +1103,7 @@
                 btn.innerHTML = '<i class="fas fa-expand"></i> Fullscreen';
             }
             
-            setTimeout(drawLines, 100);
+            setTimeout(renderBranches, 100);
         });
 
         // Zoom controls
@@ -1105,7 +1118,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'flux-mindmap.json';
+            a.download = 'canvas-mindmap.json';
             a.click();
             URL.revokeObjectURL(url);
         });
@@ -1177,8 +1190,8 @@
         setupPanning();
         refresh();
 
-        // Redraw lines on window resize
-        window.addEventListener('resize', drawLines);
+        // Redraw branches on window resize
+        window.addEventListener('resize', renderBranches);
     })();
 </script>
 </body>
